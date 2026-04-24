@@ -27,6 +27,7 @@ export default function ReportsPage() {
     setRangeStart,
     setRangeEnd,
     report,
+    loadedTab,
     isLoading,
     error,
     loadActive,
@@ -41,14 +42,18 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // The report body is only considered "fresh" when the data that landed
+  // belongs to the tab currently in view. Until then the body renders its
+  // loading state — no stale data, no flicker.
+  const showReportData = !!report && loadedTab === activeTab
+  const bodyIsLoading = isLoading || loadedTab !== activeTab
+
   const handleTabChange = (value: string) => {
     const next = value as ReportPeriod
     if (next === activeTab) return
+    // The view model handles: clear previous report, bump request id,
+    // validate filters, fetch, and apply only the latest response.
     setActiveTab(next)
-    // Load the new tab's data using the already-stored filters
-    setTimeout(() => {
-      void loadActive()
-    }, 0)
   }
 
   return (
@@ -121,7 +126,9 @@ export default function ReportsPage() {
   )
 
   function renderReportBody() {
-    if (error) {
+    // Errors only apply to the request for the currently-active tab; the
+    // race guard in the VM makes sure stale error state is never surfaced.
+    if (error && !bodyIsLoading) {
       return (
         <ErrorBanner
           title="Could not load report"
@@ -131,7 +138,8 @@ export default function ReportsPage() {
       )
     }
 
-    if (!report && !isLoading) {
+    // Empty state — no report, nothing in flight.
+    if (!showReportData && !bodyIsLoading) {
       return (
         <EmptyState
           icon={BarChart3}
@@ -141,28 +149,32 @@ export default function ReportsPage() {
       )
     }
 
+    // Only pass the actual report to children when it matches the active
+    // tab. While fetching, children render their own skeletons.
+    const shownReport = showReportData ? report : null
+
     return (
       <div className="space-y-5">
-        <RevenueSummaryCards report={report} isLoading={isLoading} />
+        <RevenueSummaryCards report={shownReport} isLoading={bodyIsLoading} />
 
         <div className="grid grid-cols-1 gap-5 lg:grid-cols-5">
           <div className="lg:col-span-2">
             <PaymentMethodBreakdownCard
-              breakdown={report?.paymentMethodBreakdown ?? []}
-              totalRevenue={report?.totalRevenue ?? 0}
-              isLoading={isLoading}
+              breakdown={shownReport?.paymentMethodBreakdown ?? []}
+              totalRevenue={shownReport?.totalRevenue ?? 0}
+              isLoading={bodyIsLoading}
             />
           </div>
           <div className="lg:col-span-3">
             {activeTab === "monthly" ? (
               <DailyBreakdownChart
-                points={report?.dailyBreakdown ?? []}
-                isLoading={isLoading}
+                points={shownReport?.dailyBreakdown ?? []}
+                isLoading={bodyIsLoading}
               />
             ) : (
               <PeriodInsightCard
-                report={report}
-                isLoading={isLoading}
+                report={shownReport}
+                isLoading={bodyIsLoading}
               />
             )}
           </div>
