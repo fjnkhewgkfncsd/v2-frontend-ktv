@@ -88,13 +88,14 @@ export default function RoomsPage() {
   )
 
   const visibleRooms = useMemo(() => {
-    if (!search.trim()) return filteredRooms
     const q = search.trim().toLowerCase()
+    if (!q) return filteredRooms
     return filteredRooms.filter(
       (r) =>
-        r.code.toLowerCase().includes(q) ||
-        r.name.toLowerCase().includes(q) ||
-        r.type.toLowerCase().includes(q),
+        r.code?.toLowerCase().includes(q) ||
+        r.name?.toLowerCase().includes(q) ||
+        r.type?.toLowerCase().includes(q) ||
+        r.status?.toLowerCase().includes(q),
     )
   }, [filteredRooms, search])
 

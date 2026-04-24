@@ -3,6 +3,7 @@ import {
   CalendarClock,
   CheckCircle2,
   Crown,
+  ExternalLink,
   Loader2,
   Pencil,
   PlayCircle,
@@ -36,6 +37,7 @@ import {
   formatDuration,
 } from "@/src/utils/format"
 import type { Reservation } from "@/src/models/reservation"
+import type { Session } from "@/src/models/session"
 
 interface Props {
   reservation: Reservation | null
@@ -45,6 +47,10 @@ interface Props {
   onCancel(reservation: Reservation): Promise<void>
   onCheckIn(reservation: Reservation): Promise<void>
   onStartSession(reservation: Reservation): Promise<void>
+  /** If set, this reservation already has an active session. */
+  activeSession?: Session | null
+  onOpenActiveSession?(session: Session): void
+  isStartingSession?: boolean
 }
 
 export function ReservationDetailSheet({
@@ -55,6 +61,9 @@ export function ReservationDetailSheet({
   onCancel,
   onCheckIn,
   onStartSession,
+  activeSession = null,
+  onOpenActiveSession,
+  isStartingSession = false,
 }: Props) {
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [busyAction, setBusyAction] = useState<
@@ -70,10 +79,14 @@ export function ReservationDetailSheet({
   }
 
   const { status } = reservation
-  const isEditable = status === "pending" || status === "confirmed"
-  const isCancellable = status === "pending" || status === "confirmed"
-  const isCheckInable = status === "pending" || status === "confirmed"
-  const isSessionable = status === "checked_in"
+  const hasActiveSession = Boolean(activeSession)
+  const isEditable =
+    (status === "pending" || status === "confirmed") && !hasActiveSession
+  const isCancellable =
+    (status === "pending" || status === "confirmed") && !hasActiveSession
+  const isCheckInable =
+    (status === "pending" || status === "confirmed") && !hasActiveSession
+  const isSessionable = status === "checked_in" && !hasActiveSession
 
   const handleCancelConfirmed = async () => {
     setBusyAction("cancel")
@@ -203,13 +216,34 @@ export function ReservationDetailSheet({
         </div>
 
         <SheetFooter className="flex flex-col gap-2 border-t border-border bg-card/40 p-4 sm:flex-col">
-          {isSessionable ? (
+          {hasActiveSession && activeSession ? (
+            <>
+              <div
+                role="status"
+                className="flex items-center justify-center gap-1.5 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-semibold uppercase tracking-wide text-primary"
+              >
+                <span
+                  aria-hidden="true"
+                  className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary"
+                />
+                Session active
+              </div>
+              <Button
+                className="w-full gap-2"
+                onClick={() => onOpenActiveSession?.(activeSession)}
+                disabled={!onOpenActiveSession}
+              >
+                <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                Open active session
+              </Button>
+            </>
+          ) : isSessionable ? (
             <Button
               className="w-full gap-2"
               onClick={handleStartSession}
-              disabled={busyAction !== null}
+              disabled={busyAction !== null || isStartingSession}
             >
-              {busyAction === "session" ? (
+              {busyAction === "session" || isStartingSession ? (
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
               ) : (
                 <PlayCircle className="h-4 w-4" aria-hidden="true" />

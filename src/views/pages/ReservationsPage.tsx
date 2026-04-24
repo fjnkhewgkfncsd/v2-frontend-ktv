@@ -5,6 +5,8 @@ import {
   CalendarPlus,
   Clock,
   Crown,
+  ExternalLink,
+  Loader2,
   RefreshCw,
   Search,
 } from "lucide-react"
@@ -36,6 +38,9 @@ import {
   type Reservation,
   type ReservationStatus,
 } from "@/src/models/reservation"
+import type { Session } from "@/src/models/session"
+import { useOperationalReservations } from "@/src/viewmodels/useOperationalReservations"
+import { useStartSessionFromReservation } from "@/src/viewmodels/useStartSessionFromReservation"
 import {
   formatCurrency,
   formatDateTime,
@@ -57,16 +62,29 @@ const FILTER_VALUES = new Set<string>([
   "cancelled",
 ])
 
+const START_SESSION_ERROR_MESSAGES: Record<string, string> = {
+  ROOM_ALREADY_OCCUPIED:
+    "That room is already occupied by another active session.",
+  ACTIVE_SESSION_CONFLICT:
+    "This reservation already has an active session.",
+  RESERVATION_NOT_READY_FOR_SESSION:
+    "Check the reservation in before starting a session.",
+  RESERVATION_NOT_FOUND: "This reservation no longer exists.",
+}
+
+function toStartSessionErrorMessage(err: unknown): string {
+  if (err instanceof ApiRequestError) {
+    return START_SESSION_ERROR_MESSAGES[err.code] ?? err.message
+  }
+  return "Failed to start session."
+}
+
 export default function ReservationsPage() {
   const navigate = useNavigate()
   const {
     reservations,
     isLoading,
     error,
-    selectedStatus,
-    setSelectedStatus,
-    filteredReservations,
-    statusCounts,
     load,
     create,
     update,
@@ -74,8 +92,22 @@ export default function ReservationsPage() {
     checkIn,
   } = useReservations()
 
+  // Operational list / counts / activeSession map come from the composed
+  // view model — it hides cancelled + session-active reservations and
+  // rebases tab counts on the operational pool, so the view just renders.
+  const {
+    operationalReservations,
+    filteredReservations,
+    statusCounts,
+    selectedStatus,
+    setSelectedStatus,
+    activeSessionByReservationId,
+  } = useOperationalReservations()
+
   const { rooms, load: loadRooms } = useRooms()
-  const { createFromReservation } = useSessions()
+  const { load: loadSessions } = useSessions()
+  const { start: startSessionFromReservation, isStarting } =
+    useStartSessionFromReservation()
 
   const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState("")
@@ -87,6 +119,10 @@ export default function ReservationsPage() {
   useEffect(() => {
     void load()
     if (rooms.length === 0) void loadRooms()
+    // Active sessions are cross-referenced to know whether a checked-in
+    // reservation still needs a "Start session" action or should instead
+    // show "Open active session".
+    void loadSessions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -188,22 +224,37 @@ export default function ReservationsPage() {
 
   const handleStartSession = useCallback(
     async (r: Reservation) => {
+      // Guard against duplicate clicks from multiple surfaces (row button
+      // and detail sheet) while the request is in flight.
+      if (isStarting(r.id)) return
+      // If another open session already exists for this reservation, just
+      // navigate to it — avoids a redundant POST and respects the rule that
+      // a room can only have one active session.
+      const existing = activeSessionByReservationId.get(r.id)
+      if (existing) {
+        setDetailOpen(false)
+        navigate(`/sessions/${existing.id}`)
+        return
+      }
       try {
-        const session = await createFromReservation(r.id)
+        const session = await startSessionFromReservation(r.id)
         toast.success("Session started", {
           description: `${session.roomRateSnapshot.code} — ${session.customerName}`,
         })
         setDetailOpen(false)
         navigate(`/sessions/${session.id}`)
       } catch (err) {
-        const msg =
-          err instanceof ApiRequestError
-            ? err.message
-            : "Failed to start session."
-        toast.error("Could not start session", { description: msg })
+        toast.error("Could not start session", {
+          description: toStartSessionErrorMessage(err),
+        })
       }
     },
-    [createFromReservation, navigate],
+    [
+      activeSessionByReservationId,
+      isStarting,
+      navigate,
+      startSessionFromReservation,
+    ],
   )
 
   return (
@@ -398,8 +449,15 @@ export default function ReservationsPage() {
                         >
                           <RowActions
                             reservation={r}
+                            activeSession={
+                              activeSessionByReservationId.get(r.id) ?? null
+                            }
+                            isStartingSession={isStarting(r.id)}
                             onCheckIn={handleCheckIn}
                             onStartSession={handleStartSession}
+                            onOpenActiveSession={(s) =>
+                              navigate(`/sessions/${s.id}`)
+                            }
                             onEdit={openEdit}
                           />
                         </TableCell>
@@ -411,10 +469,13 @@ export default function ReservationsPage() {
             </Card>
           )}
 
-          {reservations.length > 0 ? (
+          {operationalReservations.length > 0 ? (
             <p className="text-xs text-muted-foreground">
-              Showing {visible.length} of {reservations.length}{" "}
-              {reservations.length === 1 ? "reservation" : "reservations"}
+              Showing {visible.length} of {operationalReservations.length}{" "}
+              operational{" "}
+              {operationalReservations.length === 1
+                ? "reservation"
+                : "reservations"}
               {selectedStatus !== "all"
                 ? ` in "${RESERVATION_STATUS_LABEL[selectedStatus]}"`
                 : ""}
@@ -441,6 +502,18 @@ export default function ReservationsPage() {
         onCancel={handleCancel}
         onCheckIn={handleCheckIn}
         onStartSession={handleStartSession}
+        activeSession={
+          activeDetail
+            ? activeSessionByReservationId.get(activeDetail.id) ?? null
+            : null
+        }
+        onOpenActiveSession={(session) => {
+          setDetailOpen(false)
+          navigate(`/sessions/${session.id}`)
+        }}
+        isStartingSession={
+          activeDetail ? isStarting(activeDetail.id) : false
+        }
       />
     </>
   )
@@ -448,24 +521,64 @@ export default function ReservationsPage() {
 
 function RowActions({
   reservation,
+  activeSession,
+  isStartingSession,
   onCheckIn,
   onStartSession,
+  onOpenActiveSession,
   onEdit,
 }: {
   reservation: Reservation
+  activeSession: Session | null
+  isStartingSession: boolean
   onCheckIn(r: Reservation): Promise<void>
   onStartSession(r: Reservation): Promise<void>
+  onOpenActiveSession(session: Session): void
   onEdit(r: Reservation): void
 }) {
   const { status } = reservation
+
+  // Business rule: a reservation can only ever have one open session.
+  // If one already exists, we show a "Session active" badge and a direct
+  // link to that session — no Start session action.
+  if (activeSession) {
+    return (
+      <div className="flex items-center justify-end gap-2">
+        <span
+          className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary"
+          aria-label="Session active"
+        >
+          <span
+            aria-hidden="true"
+            className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary"
+          />
+          Session active
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          className="gap-1.5"
+          onClick={() => onOpenActiveSession(activeSession)}
+        >
+          <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          Open session
+        </Button>
+      </div>
+    )
+  }
+
   if (status === "checked_in") {
     return (
       <Button
         size="sm"
         onClick={() => onStartSession(reservation)}
+        disabled={isStartingSession}
         className="gap-1.5"
       >
-        Start session
+        {isStartingSession ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+        ) : null}
+        {isStartingSession ? "Starting…" : "Start session"}
       </Button>
     )
   }
