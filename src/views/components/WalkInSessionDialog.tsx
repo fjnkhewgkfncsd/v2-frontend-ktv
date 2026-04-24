@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react"
-import { Loader2, PlayCircle } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import { Crown, Loader2, PlayCircle, Users } from "lucide-react"
 import { toast } from "sonner"
 import {
   Dialog,
@@ -73,11 +73,18 @@ export function WalkInSessionDialog({
 
   const selectedRoom = rooms.find((r) => r.id === form.roomId) ?? null
 
+  // If opened from a specific room card, we lock the room field to that room.
+  const isRoomLocked = Boolean(defaultRoomId && selectedRoom)
+
   // Only available rooms can start a fresh walk-in (maps to backend guard).
-  const availableRooms = rooms
-    .filter((r) => r.isActive && r.status === "available")
-    .slice()
-    .sort((a, b) => a.code.localeCompare(b.code))
+  const availableRooms = useMemo(
+    () =>
+      rooms
+        .filter((r) => r.isActive && r.status === "available")
+        .slice()
+        .sort((a, b) => a.code.localeCompare(b.code)),
+    [rooms],
+  )
 
   const validate = (): boolean => {
     const next: Record<string, string> = {}
@@ -136,36 +143,70 @@ export function WalkInSessionDialog({
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="walkin-room">Room</Label>
-            {availableRooms.length === 0 ? (
+            {isRoomLocked && selectedRoom ? (
+              <div
+                id="walkin-room"
+                aria-readonly="true"
+                className="flex flex-col gap-2 rounded-md border border-border bg-muted/40 px-3 py-2.5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-semibold text-foreground">
+                      {selectedRoom.code} — {selectedRoom.name}
+                    </span>
+                    {selectedRoom.type === "vip" ? (
+                      <span className="inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                        <Crown className="h-3 w-3" aria-hidden="true" />
+                        VIP
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="rounded-sm bg-background px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    {selectedRoom.type}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Users className="h-3.5 w-3.5" aria-hidden="true" />
+                    Capacity {selectedRoom.capacity}
+                  </span>
+                  <span className="tabular-nums">
+                    {formatCurrency(selectedRoom.hourlyRate)}/hr
+                  </span>
+                </div>
+              </div>
+            ) : availableRooms.length === 0 ? (
               <div className="rounded-md border border-dashed border-border bg-muted/40 px-3 py-4 text-center text-sm text-muted-foreground">
                 No available rooms. Clean or turn over a room first.
               </div>
             ) : (
-              <Select
-                value={form.roomId}
-                onValueChange={(v) => setForm((f) => ({ ...f, roomId: v }))}
-              >
-                <SelectTrigger id="walkin-room" aria-invalid={Boolean(errors.roomId)}>
-                  <SelectValue placeholder="Select an available room" />
-                </SelectTrigger>
-                <SelectContent>
-                  {availableRooms.map((room) => (
-                    <SelectItem key={room.id} value={room.id}>
-                      {room.code} — {room.name} ({room.type.toUpperCase()})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <>
+                <Select
+                  value={form.roomId}
+                  onValueChange={(v) => setForm((f) => ({ ...f, roomId: v }))}
+                >
+                  <SelectTrigger id="walkin-room" aria-invalid={Boolean(errors.roomId)}>
+                    <SelectValue placeholder="Select an available room" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableRooms.map((room) => (
+                      <SelectItem key={room.id} value={room.id}>
+                        {room.code} — {room.name} ({room.type.toUpperCase()})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.roomId ? (
+                  <p className="text-xs text-destructive">{errors.roomId}</p>
+                ) : null}
+                {selectedRoom ? (
+                  <p className="text-xs text-muted-foreground">
+                    Rate: {formatCurrency(selectedRoom.hourlyRate)}/hr ·
+                    Capacity {selectedRoom.capacity}
+                  </p>
+                ) : null}
+              </>
             )}
-            {errors.roomId ? (
-              <p className="text-xs text-destructive">{errors.roomId}</p>
-            ) : null}
-            {selectedRoom ? (
-              <p className="text-xs text-muted-foreground">
-                Rate: {formatCurrency(selectedRoom.hourlyRate)}/hr ·
-                Capacity {selectedRoom.capacity}
-              </p>
-            ) : null}
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -220,7 +261,10 @@ export function WalkInSessionDialog({
             </Button>
             <Button
               type="submit"
-              disabled={isSubmitting || availableRooms.length === 0}
+              disabled={
+                isSubmitting ||
+                (!isRoomLocked && availableRooms.length === 0)
+              }
               className="gap-2"
             >
               {isSubmitting ? (
