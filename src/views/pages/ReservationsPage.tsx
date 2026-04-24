@@ -39,6 +39,7 @@ import {
   type ReservationStatus,
 } from "@/src/models/reservation"
 import type { Session } from "@/src/models/session"
+import { useOperationalReservations } from "@/src/viewmodels/useOperationalReservations"
 import { useStartSessionFromReservation } from "@/src/viewmodels/useStartSessionFromReservation"
 import {
   formatCurrency,
@@ -84,10 +85,6 @@ export default function ReservationsPage() {
     reservations,
     isLoading,
     error,
-    selectedStatus,
-    setSelectedStatus,
-    filteredReservations,
-    statusCounts,
     load,
     create,
     update,
@@ -95,8 +92,20 @@ export default function ReservationsPage() {
     checkIn,
   } = useReservations()
 
+  // Operational list / counts / activeSession map come from the composed
+  // view model — it hides cancelled + session-active reservations and
+  // rebases tab counts on the operational pool, so the view just renders.
+  const {
+    operationalReservations,
+    filteredReservations,
+    statusCounts,
+    selectedStatus,
+    setSelectedStatus,
+    activeSessionByReservationId,
+  } = useOperationalReservations()
+
   const { rooms, load: loadRooms } = useRooms()
-  const { sessions, load: loadSessions } = useSessions()
+  const { load: loadSessions } = useSessions()
   const { start: startSessionFromReservation, isStarting } =
     useStartSessionFromReservation()
 
@@ -116,16 +125,6 @@ export default function ReservationsPage() {
     void loadSessions()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  const activeSessionByReservationId = useMemo(() => {
-    const map = new Map<string, Session>()
-    for (const s of sessions) {
-      if (s.status === "open" && s.reservationId) {
-        map.set(s.reservationId, s)
-      }
-    }
-    return map
-  }, [sessions])
 
   useEffect(() => {
     const qp = searchParams.get("status")
@@ -470,10 +469,13 @@ export default function ReservationsPage() {
             </Card>
           )}
 
-          {reservations.length > 0 ? (
+          {operationalReservations.length > 0 ? (
             <p className="text-xs text-muted-foreground">
-              Showing {visible.length} of {reservations.length}{" "}
-              {reservations.length === 1 ? "reservation" : "reservations"}
+              Showing {visible.length} of {operationalReservations.length}{" "}
+              operational{" "}
+              {operationalReservations.length === 1
+                ? "reservation"
+                : "reservations"}
               {selectedStatus !== "all"
                 ? ` in "${RESERVATION_STATUS_LABEL[selectedStatus]}"`
                 : ""}
