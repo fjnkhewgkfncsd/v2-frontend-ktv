@@ -5,11 +5,11 @@ import { useAuth } from "@/src/contexts/AuthContext"
 export function AppLayout() {
   const { user } = useAuth()
   return (
-    <div className="flex min-h-screen w-full bg-background">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       <Sidebar userRole={user?.role} />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <main className="flex min-w-0 flex-1 flex-col overflow-y-auto scroll-smooth">
         <Outlet />
-      </div>
+      </main>
     </div>
   )
 }
