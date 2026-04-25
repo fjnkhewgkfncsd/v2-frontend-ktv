@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   AlertCircle,
+  Check,
+  ChevronDown,
   Crown,
   DoorOpen,
+  Loader2,
   Pencil,
   Plus,
   RefreshCw,
@@ -29,6 +32,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { Topbar } from "@/src/layouts/Topbar"
 import { ApiRequestError } from "@/src/models/api"
 import {
@@ -69,6 +80,10 @@ export default function AdminRoomsPage() {
   const [editing, setEditing] = useState<Room | null>(null)
 
   const [deactivateTarget, setDeactivateTarget] = useState<Room | null>(null)
+
+  // Per-row pending status update — keyed by room id so the loading state
+  // is scoped to a single row and never blocks the rest of the table.
+  const [statusPendingId, setStatusPendingId] = useState<string | null>(null)
 
   useEffect(() => {
     if (rooms.length === 0) void load()
@@ -120,6 +135,9 @@ export default function AdminRoomsPage() {
         )
         return
       }
+      // Block additional clicks for this row while the request is in flight.
+      if (statusPendingId === r.id) return
+      setStatusPendingId(r.id)
       try {
         const updated = await updateStatus(r.id, { status: next })
         if (updated) {
@@ -131,9 +149,11 @@ export default function AdminRoomsPage() {
         const msg =
           err instanceof ApiRequestError ? err.message : "Status update failed."
         toast.error("Could not update", { description: msg })
+      } finally {
+        setStatusPendingId((cur) => (cur === r.id ? null : cur))
       }
     },
-    [updateStatus],
+    [updateStatus, statusPendingId],
   )
 
   const handleToggleActive = useCallback(
@@ -370,29 +390,73 @@ export default function AdminRoomsPage() {
                           {formatCurrency(r.hourlyRate)}
                         </TableCell>
                         <TableCell>
-                          <div className="flex items-center gap-2">
-                            <RoomStatusBadge status={r.status} size="sm" />
-                            <Select
-                              value={r.status}
-                              onValueChange={(v) =>
-                                handleStatusChange(r, v as RoomStatus)
-                              }
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              type="button"
+                              disabled={statusPendingId === r.id}
+                              aria-label={`Change status for ${r.code}, current ${ROOM_STATUS_LABEL[r.status]}`}
+                              className="group inline-flex items-center gap-1.5 rounded-full outline-none transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-wait disabled:opacity-70"
                             >
-                              <SelectTrigger
-                                className="h-7 w-[120px] text-xs"
-                                aria-label={`Change status for ${r.code}`}
-                              >
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {ROOM_STATUS_ORDER.map((s) => (
-                                  <SelectItem key={s} value={s}>
-                                    {ROOM_STATUS_LABEL[s]}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                              <RoomStatusBadge
+                                status={r.status}
+                                size="sm"
+                                className="cursor-pointer hover:ring-2"
+                              />
+                              {statusPendingId === r.id ? (
+                                <Loader2
+                                  className="h-3 w-3 animate-spin text-muted-foreground"
+                                  aria-hidden="true"
+                                />
+                              ) : (
+                                <ChevronDown
+                                  className="h-3 w-3 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
+                                  aria-hidden="true"
+                                />
+                              )}
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              align="start"
+                              className="w-48"
+                            >
+                              <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
+                                Set status
+                              </DropdownMenuLabel>
+                              <DropdownMenuSeparator />
+                              {ROOM_STATUS_ORDER.map((s) => {
+                                const isCurrent = s === r.status
+                                const isBlocked =
+                                  (s === "occupied" && !r.currentSessionId) ||
+                                  (s === "reserved" && !r.activeReservationId)
+                                return (
+                                  <DropdownMenuItem
+                                    key={s}
+                                    disabled={isCurrent || isBlocked}
+                                    onSelect={(e) => {
+                                      // Prevent the menu from stealing focus
+                                      // before our async handler runs.
+                                      e.preventDefault()
+                                      void handleStatusChange(r, s)
+                                    }}
+                                    className="flex items-center justify-between gap-2"
+                                  >
+                                    <span className="flex items-center gap-2">
+                                      <RoomStatusBadge
+                                        status={s}
+                                        size="sm"
+                                        withDot
+                                      />
+                                    </span>
+                                    {isCurrent ? (
+                                      <Check
+                                        className="h-3.5 w-3.5 text-muted-foreground"
+                                        aria-hidden="true"
+                                      />
+                                    ) : null}
+                                  </DropdownMenuItem>
+                                )
+                              })}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                         <TableCell>
                           {r.isActive ? (
